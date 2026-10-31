@@ -1,12 +1,13 @@
+-- Safe to run more than once (idempotent). Paste the whole file into Supabase SQL Editor and click Run.
 create extension if not exists pgcrypto;
 
-create table public.profiles (
+create table if not exists public.profiles (
   id uuid primary key references auth.users(id) on delete cascade,
   display_name text not null default '',
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
-create table public.user_preferences (
+create table if not exists public.user_preferences (
   user_id uuid primary key references auth.users(id) on delete cascade,
   timezone text not null default 'UTC',
   theme text not null default 'light' check (theme in ('light','dark')),
@@ -19,7 +20,7 @@ create table public.user_preferences (
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
-create table public.habits (
+create table if not exists public.habits (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references auth.users(id) on delete cascade,
   name text not null check (char_length(trim(name)) between 1 and 60),
@@ -31,8 +32,8 @@ create table public.habits (
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
-create index habits_user_active_idx on public.habits(user_id, archived, sort_order, created_at);
-create table public.habit_schedules (
+create index if not exists habits_user_active_idx on public.habits(user_id, archived, sort_order, created_at);
+create table if not exists public.habit_schedules (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references auth.users(id) on delete cascade,
   habit_id uuid not null references public.habits(id) on delete cascade,
@@ -40,8 +41,8 @@ create table public.habit_schedules (
   created_at timestamptz not null default now(),
   unique(habit_id, day_of_week)
 );
-create index habit_schedules_user_idx on public.habit_schedules(user_id, habit_id);
-create table public.habit_completions (
+create index if not exists habit_schedules_user_idx on public.habit_schedules(user_id, habit_id);
+create table if not exists public.habit_completions (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references auth.users(id) on delete cascade,
   habit_id uuid not null references public.habits(id) on delete cascade,
@@ -49,8 +50,8 @@ create table public.habit_completions (
   completed_at timestamptz not null default now(),
   unique(habit_id, local_date)
 );
-create index habit_completions_user_date_idx on public.habit_completions(user_id, local_date desc);
-create table public.focus_sessions (
+create index if not exists habit_completions_user_date_idx on public.habit_completions(user_id, local_date desc);
+create table if not exists public.focus_sessions (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references auth.users(id) on delete cascade,
   started_at timestamptz not null,
@@ -58,8 +59,8 @@ create table public.focus_sessions (
   completed boolean not null default false,
   created_at timestamptz not null default now()
 );
-create index focus_sessions_user_started_idx on public.focus_sessions(user_id, started_at desc);
-create table public.focus_domains (
+create index if not exists focus_sessions_user_started_idx on public.focus_sessions(user_id, started_at desc);
+create table if not exists public.focus_domains (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references auth.users(id) on delete cascade,
   domain text not null check(char_length(domain) between 3 and 253),
@@ -67,7 +68,7 @@ create table public.focus_domains (
   created_at timestamptz not null default now(),
   unique(user_id, domain, kind)
 );
-create index focus_domains_user_kind_idx on public.focus_domains(user_id, kind);
+create index if not exists focus_domains_user_kind_idx on public.focus_domains(user_id, kind);
 
 -- Atomic habit + schedule writes. Ownership is always taken from the JWT.
 create or replace function public.save_habit_with_schedule(
@@ -116,6 +117,7 @@ begin
   return new;
 end;
 $$;
+drop trigger if exists on_auth_user_created on auth.users;
 create trigger on_auth_user_created after insert on auth.users for each row execute procedure public.handle_new_user();
 
 alter table public.profiles enable row level security;
@@ -126,13 +128,23 @@ alter table public.habit_completions enable row level security;
 alter table public.focus_sessions enable row level security;
 alter table public.focus_domains enable row level security;
 
+drop policy if exists "profiles self access" on public.profiles;
 create policy "profiles self access" on public.profiles for all to authenticated using(id=auth.uid()) with check(id=auth.uid());
+drop policy if exists "preferences self access" on public.user_preferences;
 create policy "preferences self access" on public.user_preferences for all to authenticated using(user_id=auth.uid()) with check(user_id=auth.uid());
+drop policy if exists "habits self access" on public.habits;
 create policy "habits self access" on public.habits for all to authenticated using(user_id=auth.uid()) with check(user_id=auth.uid());
+drop policy if exists "schedules self access" on public.habit_schedules;
 create policy "schedules self access" on public.habit_schedules for all to authenticated using(user_id=auth.uid() and public.owns_habit(habit_id,auth.uid())) with check(user_id=auth.uid() and public.owns_habit(habit_id,auth.uid()));
+drop policy if exists "completions self access" on public.habit_completions;
 create policy "completions self access" on public.habit_completions for all to authenticated using(user_id=auth.uid() and public.owns_habit(habit_id,auth.uid())) with check(user_id=auth.uid() and public.owns_habit(habit_id,auth.uid()));
+drop policy if exists "sessions self access" on public.focus_sessions;
 create policy "sessions self access" on public.focus_sessions for all to authenticated using(user_id=auth.uid()) with check(user_id=auth.uid());
+drop policy if exists "domains self access" on public.focus_domains;
 create policy "domains self access" on public.focus_domains for all to authenticated using(user_id=auth.uid()) with check(user_id=auth.uid());
 
 grant usage on schema public to authenticated;
 grant select,insert,update,delete on public.profiles, public.user_preferences, public.habits, public.habit_schedules, public.habit_completions, public.focus_sessions, public.focus_domains to authenticated;
+
+-- Make the new tables and functions visible to the API immediately.
+notify pgrst, 'reload schema';

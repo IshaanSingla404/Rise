@@ -1,1 +1,1 @@
-{"root":["./src/rise.tsx","./src/main.tsx","./src/vite-env.d.ts","./src/lib/auth.ts","./src/lib/data.ts","./src/lib/supabase.ts"],"version":"5.9.3"}
+{"root":["./src/landing.tsx","./src/rise.tsx","./src/verifyemail.tsx","./src/main.tsx","./src/screens.tsx","./src/vite-env.d.ts","./src/lib/auth.ts","./src/lib/data.ts","./src/lib/supabase.ts"],"version":"5.9.3"}
